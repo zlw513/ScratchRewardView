@@ -1,0 +1,2 @@
+rootProject.name = "MyScratchView"
+include ':app'
