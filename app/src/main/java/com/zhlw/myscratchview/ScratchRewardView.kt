@@ -32,6 +32,16 @@ class ScratchRewardView : View{
      */
     private val DEFAULT_MASK_COLOR = Color.LTGRAY
 
+    /**
+     * 水波纹扩散间隔
+     */
+    private val INVALIDATE_DURATION : Long = 8
+
+    /**
+     * 水波纹扩散增量
+     */
+    private val DIFFUSE_GAP  = 16
+
     /*
      * 默认画笔宽度
      */
@@ -132,6 +142,16 @@ class ScratchRewardView : View{
      */
     @Volatile var mIsCompleted  = false //是否刮开完
 
+    /**
+     * 扩散的最大半径
+     */
+    private var mMaxRadio = 0
+
+    /**
+     * 扩散的半径
+     */
+    private var mDiffuseRadio : Float = 0f
+
 
     constructor(context: Context?) : super(context){
         init(context, null, 0)
@@ -173,6 +193,7 @@ class ScratchRewardView : View{
         mMaskPaint = Paint().also {
             it.color = Color.BLACK
             it.isFilterBitmap = true
+            it.isAntiAlias = true
         }
 
         mTrackPaint = Paint().also {
@@ -252,16 +273,32 @@ class ScratchRewardView : View{
         canvas?.run {
             val layerCount = saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
 
-            drawBitmap(mTrackBitmap!!, paddingLeft.toFloat(), paddingTop.toFloat(), mMaskPaint)
-            mMaskPaint?.xfermode = mXferMode
+            if (mIsCompleted){
+                mTrackBitmapCanvas?.drawCircle(width/2f, height/2f, mDiffuseRadio, mTrackPaint!!)
+                drawTrace(this)
+                if (mDiffuseRadio < mMaxRadio){
+                    postInvalidateDelayed(INVALIDATE_DURATION)
+                    mDiffuseRadio += DIFFUSE_GAP
+                }
+            } else {
+                drawTrace(this)
+            }
 
-            drawBitmap(mMaskBitmap!!, mSrcRect, mDstRect!!, mMaskPaint)
-            mMaskPaint?.xfermode = null
             if (!isInEditMode) {
                 restoreToCount(layerCount)
             }
         }
 
+    }
+
+    private fun drawTrace(canvas: Canvas){
+        canvas.run {
+            drawBitmap(mTrackBitmap!!, paddingLeft.toFloat(), paddingTop.toFloat(), mMaskPaint)
+            mMaskPaint?.xfermode = mXferMode
+
+            drawBitmap(mMaskBitmap!!, mSrcRect, mDstRect!!, mMaskPaint)
+            mMaskPaint?.xfermode = null
+        }
     }
 
     @SuppressLint("DrawAllocation")
@@ -318,6 +355,8 @@ class ScratchRewardView : View{
             ), ImageView.ScaleType.CENTER_CROP
         )
         mPixels = IntArray(mMaskBitmap!!.width * mMaskBitmap!!.height)
+
+        countMaxRadio(width, height)
     }
 
     /**
@@ -327,28 +366,10 @@ class ScratchRewardView : View{
         if (!mIsCompleted) return
         mScope.launch {
             try {
-                val pixelLen = width * height//总像素个数
-                mMaskBitmap?.getPixels(mPixels, 0, width, 0, 0, width, height)
-
-                for (pos in 0 until pixelLen){
-                    erasePixel(pos)
-                }
-
                 invalidate()
             } catch (t: Throwable){
                 Log.e(TAG, "showEraseAnim error $t")
             }
-        }
-    }
-
-    private fun erasePixel(pos: Int){
-        if (mPixels!![pos] != 0) { //透明的像素值为 0
-            mPixels!![pos] = 0
-        }
-
-        if (pos%60 == 0){
-//            invalidate()
-            mMaskBitmap?.setPixels(mPixels, 0, width, 0, 0, width, height)
         }
     }
 
@@ -358,7 +379,10 @@ class ScratchRewardView : View{
     fun resetStatus(){
         mTrackBitmap = null
         mMaskBitmap = null
+        mTrackBitmapCanvas = null
+        mDstRect = null
         mPixels = null
+        mDiffuseRadio = 0f
         initStatus(width, height)
         mIsCompleted = false
         invalidate()
@@ -445,6 +469,17 @@ class ScratchRewardView : View{
         }
     }
 
+    /*
+     * 计算最大半径的方法
+    */
+    private fun countMaxRadio(width : Int,height : Int) {
+        if (width > height) {
+            mMaxRadio = width / 2
+        } else {
+            mMaxRadio = height / 2
+        }
+    }
+
     /**
      * 计算已经擦除比例多少
      */
@@ -499,6 +534,9 @@ class ScratchRewardView : View{
         fun onCompleted(view: ScratchRewardView?)
     }
 
+    /**
+     * 设置擦除监听器
+     */
     fun setEraseStatusListener(listener: EraseStatusListener){
         mEraseStatusListener = listener
     }
@@ -516,6 +554,8 @@ class ScratchRewardView : View{
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         Log.d(TAG, "onDetachedFromWindow: ")
+        mMaskBitmap?.recycle()
+        mTrackBitmap?.recycle()
         stopTask()
     }
 
